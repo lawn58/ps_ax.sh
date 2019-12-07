@@ -1,19 +1,62 @@
 #!/bin/bash
 
-for i in $(ls -d /proc/[0-9]* | sort -V);
-  do
-     PID="$(basename $i)"
-     if [ -f "$i/cmdline" ] && [ "`awk 'END { print (NR > 0 && NF > 0) ? "1" : "0"}' $i/cmdline`" == "1" ]
-     then
-       echo -ne "$(basename $i)\t" \
-       && awk -F'[ ()]' '{ printf $5 "\t"}' $i/stat 
-       awk '{ if(match($NF,/[a-z]+/)) printf $NF; }' $i/cmdline && echo; 
-     else
-       if [ -f "$i/comm" ] && [ "`awk 'END { print (NR > 0 && NF > 0) ? "1" : "0"}' $i/comm`" == "1" ]
-       then
-         echo -ne "$(basename $i)\t" \
-         && awk -F'[ ()]' '{ printf $5 "\t"}' $i/stat 
-         awk '{ if(match($NF,/[a-z]+/)) printf $NF; }' $i/comm && echo;
-       fi
-     fi
-done
+function pids {
+    PID=$*
+    for i in $PID
+    do
+       
+        if [[ -e /proc/$i/environ && -e /proc/$i/stat ]]; then
+
+            cd /proc
+            
+            
+            # PID
+            FPid=`cat $i/stat | awk '{ printf "%7d", $1 }'`
+
+            # TTY
+            Tty_nr=`awk '{print $7}' /proc/$i/stat`
+
+            # STATE
+            FState=`cat $i/stat | awk '{ printf "%1s", $3 }'`
+            SLead=`cat $i/stat | awk '{ printf $6 }'`
+            Nice=`cat $i/stat | awk '{ printf $19 }'` 
+            Threads=`cat $i/stat | awk '{ printf $20 }'`
+            VmLPages=`grep VmFlags $i/smaps | grep lo`
+            ProcGrForegr=`cat $i/stat | awk '{ printf $8 }'`
+
+            # Command
+            FCommand=`cat $i/cmdline | awk '{ printf "%10s", $1 }'`
+
+            # Field STAT
+            ## Flag 'l'(threads)
+            [[ $Threads -gt 1 ]] && Threads='l' || Threads=''
+            ## Flag 'L'(vm lock pages)
+            [[ -n $VmLPages ]] && VmLPages='L' || VmLPages=''
+            ## Flag '+' foreground process group
+            [[ $ProcGrForegr -eq "-1" ]] && ProcGrForegr='' || ProcGrForegr='+'
+            ## Flag 's' session leader
+            [[ $SLead -eq $i ]] && SLead='s' || SLead=''
+            ## Flag '<' or 'N' priority (the lowest pri. is 20 and the highest pri. is -19)
+            if [[ $Nice -lt 0 ]]; then Nice='<'; elif [[ $Nice -gt 0 ]]; then Nice='N'; else Nice=''; fi
+            
+            # TTY
+            ## Flag 'pts|tty' or tty_nr - terminal tty which uses process (pseudo terminal slave and teletype)
+            [[ Tty_nr -eq 0 ]] && TTY='?' || TTY=`ls -l $i/fd/ | grep -E 'tty|pts' | cut -d\/ -f3,4 | uniq`
+            
+            # Field COMMAND, second try to find command
+            [[ -z $FCommand ]] && FCommand=`cat $i/stat | awk '{ printf "%10s", $2 }' | tr '(' '[' | tr ')' ']'`
+        fi
+
+        #Result
+        
+        Stat="$FState$Nice$SLead$Threads$VmLPages$ProcGrForegr"
+        printf "%5d %-6s %-7s %s\n" "$FPid" "$TTY" "$Stat" "$FCommand"
+    done
+}
+
+# Get numbers to $PID
+PID=`ls /proc | grep -E '[[:digit:]]' | sort -n | xargs`
+# Header of columns
+echo "  PID TTY    STAT    COMMAND"
+# Output values(parametrs) of $PIDs
+pids $PID
