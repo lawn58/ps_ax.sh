@@ -1,62 +1,48 @@
 #!/bin/bash
 
-function pids {
-    PID=$*
-    for i in $PID
-    do
-       
-        if [[ -e /proc/$i/environ && -e /proc/$i/stat ]]; then
+IFS=" "
 
-            cd /proc
-            
-            
-            # PID
-            FPid=`cat $i/stat | awk '{ printf "%7d", $1 }'`
+function list_process {
+  for pid in $*
+   do
+     procpid=/proc/$pid
+     if [[ -e $procpid/environ && -e $procpid/stat ]]; then
+      # form /proc/$pid/stat 
+      # 1. $3 - (3) state; - process state flag - 'DRSTWXZ' 
+      # 2. $19 - (19) nice; priority range 19 (low priority) to -20 (high priority); flags '<','N',''
+      # 3. if $6==$1 (6) session; session leader flag - 's'
+      # 4. $20 (20) num_threads; number more than 1, flag - 'l'
+      # 5. Memory locks flag - grep from /proc/smaps
+      # 6. $8 (8) tpgid; process in foreground, flag -'+'
+      
+      # TIME in ps is (utime+stime)/CLK_TCK - (14) utime, (15) stime from /proc/$pid/stat
+      Time=`awk -v ticks="$(getconf CLK_TCK)" '{print strftime ("%M:%S", ($14+$15)/ticks)}' $procpid/stat`      
+      
+      # Memory Locks
+      Locked=`grep VmFlags $procpid/smaps | grep lo`
+      
+      #STAT
+      
+      Stats=`awk '{ printf $3; \
+      if ($19<0) {printf "<" } else if ($19>0) {printf "N"}; \
+      if ($6 == $1) {printf "s"}; \
+      if ($20>1) {printf "l"}}' $procpid/stat; \
+      [[ -n $Locked ]] && printf "L"; \
+      awk '{ if ($8!=-1) { printf "+" }}' $procpid/stat`
+      
+      # Command line options from /proc/$pid/cmdline
 
-            # TTY
-            Tty_nr=`awk '{print $7}' /proc/$i/stat`
-
-            # STATE
-            FState=`cat $i/stat | awk '{ printf "%1s", $3 }'`
-            SLead=`cat $i/stat | awk '{ printf $6 }'`
-            Nice=`cat $i/stat | awk '{ printf $19 }'` 
-            Threads=`cat $i/stat | awk '{ printf $20 }'`
-            VmLPages=`grep VmFlags $i/smaps | grep lo`
-            ProcGrForegr=`cat $i/stat | awk '{ printf $8 }'`
-
-            # Command
-            FCommand=`cat $i/cmdline | awk '{ printf "%10s", $1 }'`
-
-            # Field STAT
-            ## Flag 'l'(threads)
-            [[ $Threads -gt 1 ]] && Threads='l' || Threads=''
-            ## Flag 'L'(vm lock pages)
-            [[ -n $VmLPages ]] && VmLPages='L' || VmLPages=''
-            ## Flag '+' foreground process group
-            [[ $ProcGrForegr -eq "-1" ]] && ProcGrForegr='' || ProcGrForegr='+'
-            ## Flag 's' session leader
-            [[ $SLead -eq $i ]] && SLead='s' || SLead=''
-            ## Flag '<' or 'N' priority (the lowest pri. is 20 and the highest pri. is -19)
-            if [[ $Nice -lt 0 ]]; then Nice='<'; elif [[ $Nice -gt 0 ]]; then Nice='N'; else Nice=''; fi
-            
-            # TTY
-            ## Flag 'pts|tty' or tty_nr - terminal tty which uses process (pseudo terminal slave and teletype)
-            [[ Tty_nr -eq 0 ]] && TTY='?' || TTY=`ls -l $i/fd/ | grep -E 'tty|pts' | cut -d\/ -f3,4 | uniq`
-            
-            # Field COMMAND, second try to find command
-            [[ -z $FCommand ]] && FCommand=`cat $i/stat | awk '{ printf "%10s", $2 }' | tr '(' '[' | tr ')' ']'`
-        fi
-
-        #RESULT
-        
-        Stat="$FState$Nice$SLead$Threads$VmLPages$ProcGrForegr"
-        printf "%5d %-6s %-7s %s\n" "$FPid" "$TTY" "$Stat" "$FCommand"
-    done
+      Cmdline=`awk '{ print $1 }' $procpid/cmdline | sed 's/\x0/ /g'`
+      [[ -z $Cmdline ]] && Cmdline=`strings -s' ' $procpid/stat | awk '{ printf $2 }' | sed 's/(/[/; s/)/]/'`
+      
+      # TTY grep form /proc/$pid/fd
+      qq=`ls -l $procpid/fd/ | grep -E '\/dev\/tty|pts' | cut -d\/ -f3,4 | uniq`
+      Tty=`awk '{ if ($7 == 0) {printf "?"} else { printf "'"$qq"'" }}' $procpid/stat`
+    
+    fi
+    printf  '%7d %-7s %-12s %s %-10s\n' "$pid" "$Tty" "$Stats" "$Time" "$Cmdline"
+  done
 }
-
-# Get numbers to $PID
-PID=`ls /proc | grep -E '[[:digit:]]' | sort -n | xargs`
-# Header of columns
-echo "  PID TTY    STAT    COMMAND"
-# Output values(parametrs) of $PIDs
-pids $PID
+ALLPIDS=`ls /proc | grep -P ^[0-9] | sort -n | xargs`
+printf  '%7s %-7s %-12s %s %-10s\n' "PID" "TTY" "STAT" "TIME" "COMMAND"
+list_process $ALLPIDS
