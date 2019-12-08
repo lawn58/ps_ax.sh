@@ -47,7 +47,7 @@ function pids {
             [[ -z $FCommand ]] && FCommand=`cat $i/stat | awk '{ printf "%10s", $2 }' | tr '(' '[' | tr ')' ']'`
         fi
 
-        #Result
+        #RESULT
         
         Stat="$FState$Nice$SLead$Threads$VmLPages$ProcGrForegr"
         printf "%5d %-6s %-7s %s\n" "$FPid" "$TTY" "$Stat" "$FCommand"
